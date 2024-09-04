@@ -8,6 +8,7 @@ Default format for import into the NetBox VM tab. Currently, it exports data for
 - Interface bridges
 - IPv4/IPv6 addresses if static
 - Name, status, device (PVE name), vCPUs, memory, disk size
+- VM or LXC will be marked in `Tags`
 
 ### 1. Installation
 

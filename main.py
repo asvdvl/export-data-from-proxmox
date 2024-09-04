@@ -3,12 +3,17 @@ from dotenv import load_dotenv, set_key
 from proxmoxer import ProxmoxAPI
 
 env_path = '.env'
+id_mapping_path = 'id_mapping.csv'
+
 load_dotenv(env_path)
 
 host = os.getenv('HOST', 'localhost')
 user = os.getenv('USERNAME', 'root@pam')
 token_name = os.getenv('TOKEN_NAME', 'exporting')
 token_value = os.getenv('TOKEN_VALUE', 'token_value')
+
+if os.path.exists(id_mapping_path):
+    print('Not implemented')
 
 if not os.path.exists(env_path):
     with open(env_path, 'w') as f:
@@ -31,20 +36,78 @@ def status_translation(status):
         case _:
             return 'failed'
 
-with open('vms.csv', 'w') as f:
-    def add_to_file(text):
-        print(text, end='')
-        f.write(f'{text}')
-    add_to_file('id,name,status,device,vcpus,memory,tags,disk\n')
-    for pve_node in proxmox.nodes.get():
-        print("{0}:".format(pve_node['node']))
+def add_to_file(text, file, need_comma):
+    text = f'{text},' if need_comma else text
 
-        #lxc
-        for container in proxmox.nodes(pve_node['node']).lxc.get():
-            add_to_file(f"{container['vmid']},")   #id
-            add_to_file(f"{container['name']},")   #name
-            add_to_file(f"{status_translation(container['status'])},")   #status
-            add_to_file(f"{pve_node['node']},{container['cpus']},")      #device,vcpus
-            add_to_file(f"{container['maxmem']/ 1024 / 1024:.0f},lxc,")       #memory,tags
-            add_to_file(f"{container['maxdisk']/ 1024 / 1024:.0f}")                                            
-            add_to_file(f"\n")
+    print(text, end='')
+    file.write(f'{text}')
+
+f_vms = open('vms.csv', 'w')
+def add_to_vms(text, need_comma = True):
+    add_to_file(text, f_vms, need_comma)
+add_to_vms('name,status,device,vcpus,memory,tags,disk\n', False)
+
+f_int = open('interfaces.csv', 'w')
+def add_to_interfaces(text, need_comma = True):
+    add_to_file(text, f_int, need_comma)
+add_to_interfaces('virtual_machine,name,enabled,mac_address,mtu\n', False)
+
+
+def base_exporter(ct, is_lxc):
+    add_to_vms(f"{status_translation(ct['status'])}")                   #status
+    add_to_vms(f"{pve_node['node']},{ct['cpus']}")                      #device,vcpus
+    add_to_vms(f"{ct['maxmem']/ 1024 / 1024:.0f}")                      #memory
+    add_to_vms(f"{'lxc' if is_lxc else 'vm'}")                          #tags
+    add_to_vms(f"{ct['maxdisk']/ 1024 / 1024 / 1024:.0f}\n", False)     #disk
+      
+
+def param_str_to_dict(str):
+    params = str.split(',')
+    dict = {}
+    for param in params:
+        key, value = param.split('=', 1)
+        dict[key] = value
+    return dict
+
+for pve_node in proxmox.nodes.get():
+    print("{0}:".format(pve_node['node']))
+    node = proxmox.nodes(pve_node['node'])
+
+    #lxc
+    for ct in node.lxc.get():
+        name = f"{ct['vmid']} - {ct['name']}"
+        add_to_vms(name)                 #id,name
+        base_exporter(ct, True)
+
+        config = node.lxc(ct['vmid']).config.get()
+
+        for param in config:
+            if param.startswith('net'):
+                intr = param_str_to_dict(config[param])
+                add_to_interfaces(name)                         #virtual_machine
+                add_to_interfaces(f"{intr['name']}")            #name
+                #add_to_interfaces(f"{intr['bridge']}")          #bridge(disabled because for netbox it is not a bridge of the node itself but an internal bridge inside the virtual machine)
+                add_to_interfaces(f"true")                      #enabled
+                add_to_interfaces(f"{intr['hwaddr']}")          #mac_address
+                if 'mtu' in intr:
+                    add_to_interfaces(f"{intr['mtu']}", False)  #mtu
+                add_to_interfaces(",\n", False)
+
+    #vms
+    for vm in node.qemu.get():
+        name = f"{vm['vmid']} - {vm['name']}"
+        add_to_vms(name)                 #id,name
+        base_exporter(vm, False)
+
+        config = node.qemu(vm['vmid']).config.get()
+        for param in config:
+            if param.startswith('net'):
+                intr = param_str_to_dict(config[param])
+                add_to_interfaces(name)                         #virtual_machine
+                add_to_interfaces(f"{param}")            #name
+                #add_to_interfaces(f"{intr['bridge']}")          #bridge(same as for lxc)
+                add_to_interfaces(f"true")                      #enabled
+                add_to_interfaces(f"{intr['virtio']}")          #mac_address
+                if 'mtu' in intr:
+                    add_to_interfaces(f"{intr['mtu']}", False)  #mtu
+                add_to_interfaces(",\n", False)
