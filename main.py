@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv, set_key
+import ipaddress as ipa
 from proxmoxer import ProxmoxAPI
 
 env_path = '.env'
@@ -52,6 +53,10 @@ def add_to_interfaces(text, need_comma = True):
     add_to_file(text, f_int, need_comma)
 add_to_interfaces('virtual_machine,name,enabled,mac_address,mtu\n', False)
 
+f_ip = open('ips.csv', 'w')
+def add_to_ips(text, need_comma = True):
+    add_to_file(text, f_ip, need_comma)
+add_to_ips('address,status,virtual_machine,interface\n', False)
 
 def base_exporter(ct, is_lxc):
     add_to_vms(f"{status_translation(ct['status'])}")                   #status
@@ -59,7 +64,21 @@ def base_exporter(ct, is_lxc):
     add_to_vms(f"{ct['maxmem']/ 1024 / 1024:.0f}")                      #memory
     add_to_vms(f"{'lxc' if is_lxc else 'vm'}")                          #tags
     add_to_vms(f"{ct['maxdisk']/ 1024 / 1024 / 1024:.0f}\n", False)     #disk
-      
+
+def std_addr(int_name, intr):
+    add_to_ips('active')                        #status
+    add_to_ips(int_name)                        #virtual_machine
+    add_to_ips(f"{intr['name']}\n", False)      #interface
+
+def validate_ip(address, req_type):
+    try:
+        intr = ipa.ip_interface(address)
+        if type(intr) == req_type:
+            return True
+        return False
+    except ValueError:
+        return False
+
 
 def param_str_to_dict(str):
     params = str.split(',')
@@ -91,8 +110,17 @@ for pve_node in proxmox.nodes.get():
                 add_to_interfaces(f"{intr['hwaddr']}")          #mac_address
                 if 'mtu' in intr:
                     add_to_interfaces(f"{intr['mtu']}", False)  #mtu
-                add_to_interfaces(",\n", False)
+                add_to_interfaces("\n", False)
 
+                ip = intr['ip']
+                if validate_ip(ip, ipa.IPv4Interface):
+                    add_to_ips(ip)                              #address
+                    std_addr(name, intr)
+                
+                ip6 = intr['ip6']
+                if validate_ip(ip6, ipa.IPv6Interface):
+                    add_to_ips(ip6)                              #address
+                    std_addr(name, intr)
     #vms
     for vm in node.qemu.get():
         name = f"{vm['vmid']} - {vm['name']}"
