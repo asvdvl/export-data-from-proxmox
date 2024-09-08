@@ -46,7 +46,7 @@ def add_to_file(text, file, need_comma):
 f_vms = open('vms.csv', 'w')
 def add_to_vms(text, need_comma = True):
     add_to_file(text, f_vms, need_comma)
-add_to_vms('name,status,device,vcpus,memory,tags,disk\n', False)
+add_to_vms('name,status,device,vcpus,memory,tags,disk,cluster\n', False)
 
 f_int = open('interfaces.csv', 'w')
 def add_to_interfaces(text, need_comma = True):
@@ -63,7 +63,8 @@ def base_exporter(ct, is_lxc):
     add_to_vms(f"{pve_node['node']},{ct['cpus']}")                      #device,vcpus
     add_to_vms(f"{ct['maxmem']/ 1024 / 1024:.0f}")                      #memory
     add_to_vms(f"{'lxc' if is_lxc else 'vm'}")                          #tags
-    add_to_vms(f"{ct['maxdisk']/ 1024 / 1024 / 1024:.0f}\n", False)     #disk
+    add_to_vms(f"{ct['maxdisk']/ 1024 / 1024 / 1024:.0f}")              #disk
+    add_to_vms("CLUSTERNAME__CHANGEME__\n", False)
 
 def std_addr(int_name, intr):
     add_to_ips('active')                        #status
@@ -112,15 +113,17 @@ for pve_node in proxmox.nodes.get():
                     add_to_interfaces(f"{intr['mtu']}", False)  #mtu
                 add_to_interfaces("\n", False)
 
-                ip = intr['ip']
-                if validate_ip(ip, ipa.IPv4Interface):
-                    add_to_ips(ip)                              #address
-                    std_addr(name, intr)
+                if 'ip' in intr:
+                    ip = intr['ip']
+                    if validate_ip(ip, ipa.IPv4Interface):
+                        add_to_ips(ip)                              #address
+                        std_addr(name, intr)
                 
-                ip6 = intr['ip6']
-                if validate_ip(ip6, ipa.IPv6Interface):
-                    add_to_ips(ip6)                              #address
-                    std_addr(name, intr)
+                if 'ip6' in intr:
+                    ip6 = intr['ip6']
+                    if validate_ip(ip6, ipa.IPv6Interface):
+                        add_to_ips(ip6)                              #address
+                        std_addr(name, intr)
     #vms
     for vm in node.qemu.get():
         name = f"{vm['vmid']} - {vm['name']}"
@@ -132,10 +135,16 @@ for pve_node in proxmox.nodes.get():
             if param.startswith('net'):
                 intr = param_str_to_dict(config[param])
                 add_to_interfaces(name)                         #virtual_machine
-                add_to_interfaces(f"{param}")            #name
-                #add_to_interfaces(f"{intr['bridge']}")          #bridge(same as for lxc)
+                add_to_interfaces(f"{param}")                   #name
+                #add_to_interfaces(f"{intr['bridge']}")         #bridge(same as for lxc)
                 add_to_interfaces(f"true")                      #enabled
-                add_to_interfaces(f"{intr['virtio']}")          #mac_address
+
+                if_mac = ''
+                for iftype in ['virtio', 'e1000', 'e1000e', 'rtl8139', 'vmxnet3']:
+                    if iftype in intr:
+                        if_mac = intr[iftype]
+                add_to_interfaces(f"{if_mac}")    #mac_address
+                
                 if 'mtu' in intr:
                     add_to_interfaces(f"{intr['mtu']}", False)  #mtu
-                add_to_interfaces(",\n", False)
+                add_to_interfaces("\n", False)
