@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv, set_key
 import ipaddress as ipa
 from proxmoxer import ProxmoxAPI
+import argparse
 
 env_path = '.env'
 id_mapping_path = 'id_mapping.csv'
@@ -58,7 +59,7 @@ def add_to_ips(text, need_comma = True):
     add_to_file(text, f_ip, need_comma)
 add_to_ips('address,status,virtual_machine,interface\n', False)
 
-def base_exporter(ct, is_lxc):
+def base_exporter(ct, is_lxc, pve_node):
     add_to_vms(f"{status_translation(ct['status'])}")                   #status
     add_to_vms(f"{pve_node['node']},{ct['cpus']}")                      #device,vcpus
     add_to_vms(f"{ct['maxmem']/ 1024 / 1024:.0f}")                      #memory
@@ -89,15 +90,23 @@ def param_str_to_dict(str):
         dict[key] = value
     return dict
 
+parser = argparse.ArgumentParser()
+parser.add_argument("id", nargs="?", type=int, help="Optional lxc/vm id")
+args = parser.parse_args()
+
+id = args.id
+
 for pve_node in proxmox.nodes.get():
     print("{0}:".format(pve_node['node']))
     node = proxmox.nodes(pve_node['node'])
 
     #lxc
     for ct in node.lxc.get():
+        if id and ct['vmid'] != id:
+            continue
         name = f"{ct['vmid']} - {ct['name']}"
         add_to_vms(name)                 #id,name
-        base_exporter(ct, True)
+        base_exporter(ct, True, pve_node)
 
         config = node.lxc(ct['vmid']).config.get()
 
@@ -126,9 +135,12 @@ for pve_node in proxmox.nodes.get():
                         std_addr(name, intr)
     #vms
     for vm in node.qemu.get():
+        if id and vm['vmid'] != id:
+            continue
+
         name = f"{vm['vmid']} - {vm['name']}"
         add_to_vms(name)                 #id,name
-        base_exporter(vm, False)
+        base_exporter(vm, False, pve_node)
 
         config = node.qemu(vm['vmid']).config.get()
         for param in config:
